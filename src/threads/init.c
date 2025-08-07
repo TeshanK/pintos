@@ -72,6 +72,111 @@ static void locate_block_device (enum block_type, const char *name);
 
 int pintos_init (void) NO_RETURN;
 
+
+/* Lab 1 function prototypes */
+void whoami(void)
+{
+    printf("\nTeshan Kannangara : 230315C\n");
+}
+void my_shutdown(void)
+{
+    shutdown_power_off();
+}
+void my_time(void)
+{
+    time_t time_now = rtc_get_time(); 
+    printf("\n%lu\n", time_now);
+}
+void my_ram(void)
+{
+    printf("\nPintos RAM : %'" PRIu32 " kB\n", init_ram_pages * PGSIZE / 1024);
+}
+void my_thread(void)
+{
+    printf("\n");
+    thread_print_stats();
+}
+void my_priority(void)
+{
+    struct thread *this_thread = thread_current();
+    int priority = this_thread->priority;
+    char *priority_string;
+
+    switch(priority) {
+    case 0:
+        priority_string = "PRI_MIN";
+        break;
+    case 31:
+        priority_string = "PRI_DEFAULT";
+        break;
+    case 63:
+        priority_string = "PRI_MAX";
+        break;
+    }
+    printf("\nCurrent Thread Priority = %s\n", priority_string);
+}
+
+void run_cmd(char *cmd)
+{
+    if (strcmp(cmd, "whoami") == 0) {
+        whoami();
+    } else if (strcmp(cmd, "shutdown") == 0) {
+        my_shutdown();
+    } else if (strcmp(cmd, "time") == 0) {
+        my_time();
+    } else if (strcmp(cmd, "ram") == 0) {
+        my_ram();
+    } else if (strcmp(cmd, "thread") == 0) {
+        my_thread();
+    } else if (strcmp(cmd, "priority") == 0) {
+        my_priority();
+    } else {
+        printf("\nInvalid command\n");
+    }
+}
+
+void shell_init(void)
+{
+    char cmd[1024];
+    uint8_t new_line = 13;
+    uint8_t backspace = 8;
+
+    while (1) {
+        char cmd[1024];
+        printf("\nCS2042> ");
+        uint8_t key = 0;
+        int i = 0;
+        while (key != new_line) {
+            key = input_getc();
+            if (key == backspace) {
+                // implement bound checking for cursor to not delete the prompt
+                if ((i - 1) < 0) {
+                    continue;
+                }
+                cmd[--i] = '\0'; 
+                putchar('\b');
+                putchar('\0');
+                putchar('\b');
+            } else {
+                printf("%c", key);
+                cmd[i] = (char)key;
+                i++;
+            }
+        }
+        cmd[i-1] = '\0';
+        if (i < 2) {
+            continue;
+        }
+
+        if (strcmp(cmd, "exit") == 0) {
+            printf("\nExiting the shell...");
+            return;
+        } else {
+            run_cmd(cmd);
+        }
+    }
+}
+
 /* Pintos main entry point. */
 int
 pintos_init (void)
@@ -134,6 +239,7 @@ pintos_init (void)
     run_actions (argv);
   } else {
     // TODO: no command line passed to kernel. Run interactively 
+    shell_init();
   }
 
   /* Finish up. */
@@ -430,4 +536,5 @@ locate_block_device (enum block_type role, const char *name)
       block_set_role (role, block);
     }
 }
+
 #endif
