@@ -115,6 +115,12 @@ void my_priority(void)
     }
     printf("\nCurrent Thread Priority = %s\n", priority_string);
 }
+void my_help(void)
+{
+    printf("\n");
+    printf("help whoami shutdown time ram thread priority exit");
+    printf("\n");
+}
 
 void run_cmd(char *cmd)
 {
@@ -130,6 +136,8 @@ void run_cmd(char *cmd)
         my_thread();
     } else if (strcmp(cmd, "priority") == 0) {
         my_priority();
+    } else if (strcmp(cmd, "help") == 0) {
+        my_help();
     } else {
         printf("\nInvalid command\n");
     }
