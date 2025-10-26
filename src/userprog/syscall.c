@@ -19,6 +19,8 @@ static void get_args (struct intr_frame *f, int *argv, int argc);
 static bool validate_user_ptr (const void *ptr);
 static bool validate_user_string (const char *str);
 static bool validate_user_buffer (const void *buffer, size_t size);
+static int get_user (const uint8_t *uaddr);
+static bool put_user (uint8_t *udst, uint8_t byte);
 
 /* File system lock. */
 static struct lock filesys_lock;
@@ -42,7 +44,17 @@ syscall_handler (struct intr_frame *f)
       thread_exit ();
     }
   
-  syscall_num = *(int *) f->esp;
+  /* Read syscall number byte by byte to avoid segfault. */
+  syscall_num = 0;
+  for (int j = 0; j < 4; j++)
+    {
+      int byte = get_user ((const uint8_t *) f->esp + j);
+      if (byte == -1)
+        {
+          thread_exit ();
+        }
+      syscall_num |= (byte << (j * 8));
+    }
   
   /* Get system call arguments. */
   get_args (f, args, 4);
@@ -106,7 +118,19 @@ get_args (struct intr_frame *f, int *argv, int argc)
         {
           thread_exit ();
         }
-      argv[i] = *addr;
+      
+      /* Read integer byte by byte to avoid segfault. */
+      int value = 0;
+      for (int j = 0; j < 4; j++)
+        {
+          int byte = get_user ((const uint8_t *) addr + j);
+          if (byte == -1)
+            {
+              thread_exit ();
+            }
+          value |= (byte << (j * 8));
+        }
+      argv[i] = value;
     }
 }
 
@@ -137,12 +161,15 @@ validate_user_string (const char *str)
   /* Check for null terminator within reasonable bounds. */
   for (int i = 0; i < 4096; i++)
     {
-      char c;
+      int result;
       if (!validate_user_ptr (str + i))
         return false;
       
-      c = *(str + i);
-      if (c == '\0')
+      result = get_user ((const uint8_t *) (str + i));
+      if (result == -1)
+        return false;
+      
+      if (result == '\0')
         return true;
     }
   
@@ -172,6 +199,31 @@ validate_user_buffer (const void *buffer, size_t size)
     }
   
   return true;
+}
+
+/* Reads a byte at user virtual address UADDR.
+   UADDR must be below PHYS_BASE.
+   Returns the byte value if successful, -1 if a segfault
+   occurred. */
+static int
+get_user (const uint8_t *uaddr)
+{
+  int result;
+  asm ("movl $1f, %0; movzbl %1, %0; 1:"
+       : "=&a" (result) : "m" (*uaddr));
+  return result;
+}
+
+/* Writes BYTE to user address UDST.
+   UDST must be below PHYS_BASE.
+   Returns true if successful, false if a segfault occurred. */
+static bool
+put_user (uint8_t *udst, uint8_t byte)
+{
+  int error_code;
+  asm ("movl $1f, %0; movb %b2, %1; 1:"
+       : "=&a" (error_code), "=m" (*udst) : "q" (byte));
+  return error_code != -1;
 }
 
 void
@@ -300,7 +352,9 @@ read (int fd, void *buffer, unsigned size)
       uint8_t *buf = (uint8_t *) buffer;
       for (unsigned i = 0; i < size; i++)
         {
-          buf[i] = input_getc ();
+          uint8_t byte = input_getc ();
+          if (!put_user (buf + i, byte))
+            return -1;
         }
       return size;
     }
