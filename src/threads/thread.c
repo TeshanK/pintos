@@ -476,6 +476,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->waited = false;
   for (int i = 0; i < 128; i++)
     t->files[i] = NULL;
+  t->next_fd = 2;
+  t->fn_copy = NULL;
 #endif
 
   old_level = intr_disable ();

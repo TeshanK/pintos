@@ -114,6 +114,8 @@ struct thread
     
     /* File descriptor table. */
     struct file *files[128];            /* Open files. */
+    int next_fd;                        /* Next available file descriptor. */
+    char *fn_copy;                      /* File name copy for argument parsing. */
 #endif
 
     /* Owned by thread.c. */

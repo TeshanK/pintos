@@ -11,6 +11,18 @@
 >> text, lecture notes, and course staff. If you fail to do so while your
 >> soltion contains such material you will be penalized.
 
+https://cs162.org/static/proj/pintos-docs/
+https://www.cs.jhu.edu/~huang/cs318/fall22/project/project2.html
+https://pkuflyingpig.gitbook.io/pintos
+https://www.youtube.com/playlist?list=PLmQBKYly8OsWiRYGn1wvjwAdbuNWOBJNf
+https://www.youtube.com/playlist?list=PLD3EwQVkinwSR4xcgYvf9ARoYY8wTZCfP
+https://en.wikipedia.org/wiki/X86_calling_conventions
+https://github.com/supulkalhara/pintos-lab2
+https://github.com/dillstead/pintos
+https://web.stanford.edu/class/cs140/projects/pintos/pintos.html#SEC_Contents
+https://www.youtube.com/watch?v=3DcNBOUkXuw
+https://youtu.be/bFUmvVgmbOs?si=gnbNpU8ZffvWImGo
+
 			     ALARM CLOCK
 			     ===========
 

@@ -15,12 +15,10 @@
 #include "threads/vaddr.h"
 
 static void syscall_handler (struct intr_frame *);
-static void get_args (struct intr_frame *f, int *argv, int argc);
-static bool validate_user_ptr (const void *ptr);
-static bool validate_user_string (const char *str);
-static bool validate_user_buffer (const void *buffer, size_t size);
+static bool validate_ptr (const void *ptr, size_t size);
 static int get_user (const uint8_t *uaddr);
 static bool put_user (uint8_t *udst, uint8_t byte);
+static struct file *get_file (int fd);
 
 /* File system lock. */
 static struct lock filesys_lock;
@@ -35,195 +33,81 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f) 
 {
-  int syscall_num;
-  int args[4] = {0, 0, 0, 0};
+  if (!validate_ptr ((const void *) f->esp, 4))
+    thread_exit ();
   
-  /* Validate and get syscall number. */
-  if (!validate_user_ptr ((const void *) f->esp))
-    {
-      thread_exit ();
-    }
+  int syscall_num = *((int *) f->esp);
+  if (syscall_num < 1 || syscall_num > SYS_INUMBER)
+    thread_exit ();
   
-  /* Read syscall number byte by byte to avoid segfault. */
-  syscall_num = 0;
-  for (int j = 0; j < 4; j++)
-    {
-      int byte = get_user ((const uint8_t *) f->esp + j);
-      if (byte == -1)
-        {
-          thread_exit ();
-        }
-      syscall_num |= (byte << (j * 8));
-    }
-  
-  /* Get system call arguments. */
-  get_args (f, args, 4);
+  int *args = (int *) f->esp;
+  if (!validate_ptr (args + 1, syscall_num < SYS_EXEC ? 12 : 16))
+    thread_exit ();
   
   switch (syscall_num)
     {
-    case SYS_HALT:
-      halt ();
-      break;
-    case SYS_EXIT:
-      exit (args[0]);
-      break;
-    case SYS_EXEC:
-      f->eax = exec ((const char *) args[0]);
-      break;
-    case SYS_WAIT:
-      f->eax = wait ((pid_t) args[0]);
-      break;
-    case SYS_CREATE:
-      f->eax = create ((const char *) args[0], (unsigned) args[1]);
-      break;
-    case SYS_REMOVE:
-      f->eax = remove ((const char *) args[0]);
-      break;
-    case SYS_OPEN:
-      f->eax = open ((const char *) args[0]);
-      break;
-    case SYS_FILESIZE:
-      f->eax = filesize ((int) args[0]);
-      break;
-    case SYS_READ:
-      f->eax = read ((int) args[0], (void *) args[1], (unsigned) args[2]);
-      break;
-    case SYS_WRITE:
-      f->eax = write ((int) args[0], (const void *) args[1], (unsigned) args[2]);
-      break;
-    case SYS_SEEK:
-      seek ((int) args[0], (unsigned) args[1]);
-      break;
-    case SYS_TELL:
-      f->eax = tell ((int) args[0]);
-      break;
-    case SYS_CLOSE:
-      close ((int) args[0]);
-      break;
-    default:
-      thread_exit ();
-      break;
+    case SYS_HALT: halt (); break;
+    case SYS_EXIT: exit (args[1]); break;
+    case SYS_EXEC: f->eax = exec ((const char *) args[1]); break;
+    case SYS_WAIT: f->eax = wait ((pid_t) args[1]); break;
+    case SYS_CREATE: f->eax = create ((const char *) args[1], (unsigned) args[2]); break;
+    case SYS_REMOVE: f->eax = remove ((const char *) args[1]); break;
+    case SYS_OPEN: f->eax = open ((const char *) args[1]); break;
+    case SYS_FILESIZE: f->eax = filesize ((int) args[1]); break;
+    case SYS_READ: f->eax = read ((int) args[1], (void *) args[2], (unsigned) args[3]); break;
+    case SYS_WRITE: f->eax = write ((int) args[1], (const void *) args[2], (unsigned) args[3]); break;
+    case SYS_SEEK: seek ((int) args[1], (unsigned) args[2]); break;
+    case SYS_TELL: f->eax = tell ((int) args[1]); break;
+    case SYS_CLOSE: close ((int) args[1]); break;
+    default: thread_exit ();
     }
 }
 
-static void
-get_args (struct intr_frame *f, int *argv, int argc)
-{
-  int *esp = (int *) f->esp;
-  
-  for (int i = 0; i < argc; i++)
-    {
-      int *addr = esp + 1 + i;
-      if (!validate_user_ptr ((const void *) addr))
-        {
-          thread_exit ();
-        }
-      
-      /* Read integer byte by byte to avoid segfault. */
-      int value = 0;
-      for (int j = 0; j < 4; j++)
-        {
-          int byte = get_user ((const uint8_t *) addr + j);
-          if (byte == -1)
-            {
-              thread_exit ();
-            }
-          value |= (byte << (j * 8));
-        }
-      argv[i] = value;
-    }
-}
-
+/* Unified validation for pointers with size check. */
 static bool
-validate_user_ptr (const void *ptr)
+validate_ptr (const void *ptr, size_t size)
 {
-  if (ptr == NULL)
+  if (!ptr || !is_user_vaddr (ptr))
     return false;
   
-  if (!is_user_vaddr (ptr))
-    return false;
+  struct thread *t = thread_current ();
+  if (!t->pagedir)
+    return true;
   
-  struct thread *cur = thread_current ();
-  if (cur->pagedir != NULL)
-    {
-      return pagedir_get_page (cur->pagedir, ptr) != NULL;
-    }
-  
-  return true;
-}
-
-static bool
-validate_user_string (const char *str)
-{
-  if (!validate_user_ptr (str))
-    return false;
-  
-  /* Check for null terminator within reasonable bounds. */
-  for (int i = 0; i < 4096; i++)
-    {
-      int result;
-      if (!validate_user_ptr (str + i))
-        return false;
-      
-      result = get_user ((const uint8_t *) (str + i));
-      if (result == -1)
-        return false;
-      
-      if (result == '\0')
-        return true;
-    }
-  
-  return false;
-}
-
-static bool
-validate_user_buffer (const void *buffer, size_t size)
-{
-  if (buffer == NULL)
-    return false;
-  
-  if (!is_user_vaddr (buffer))
-    return false;
-  
-  if (!is_user_vaddr ((const uint8_t *) buffer + size - 1))
-    return false;
-  
-  struct thread *cur = thread_current ();
-  if (cur->pagedir != NULL)
-    {
-      for (size_t i = 0; i < size; i += PGSIZE)
-        {
-          if (pagedir_get_page (cur->pagedir, (const uint8_t *) buffer + i) == NULL)
-            return false;
-        }
-    }
-  
-  return true;
+  uint8_t *end = (uint8_t *) ptr + size - 1;
+  return is_user_vaddr (end) && 
+         pagedir_get_page (t->pagedir, ptr) && 
+         (size == 1 || pagedir_get_page (t->pagedir, end));
 }
 
 /* Reads a byte at user virtual address UADDR.
-   UADDR must be below PHYS_BASE.
-   Returns the byte value if successful, -1 if a segfault
-   occurred. */
+   Returns the byte value if successful, -1 if a segfault occurred. */
 static int
 get_user (const uint8_t *uaddr)
 {
   int result;
-  asm ("movl $1f, %0; movzbl %1, %0; 1:"
-       : "=&a" (result) : "m" (*uaddr));
+  asm ("movl $1f, %0; movzbl %1, %0; 1:" : "=&a" (result) : "m" (*uaddr));
   return result;
 }
 
 /* Writes BYTE to user address UDST.
-   UDST must be below PHYS_BASE.
    Returns true if successful, false if a segfault occurred. */
 static bool
 put_user (uint8_t *udst, uint8_t byte)
 {
   int error_code;
-  asm ("movl $1f, %0; movb %b2, %1; 1:"
-       : "=&a" (error_code), "=m" (*udst) : "q" (byte));
+  asm ("movl $1f, %0; movb %b2, %1; 1:" : "=&a" (error_code), "=m" (*udst) : "q" (byte));
   return error_code != -1;
+}
+
+/* Helper to get file pointer from fd with validation. */
+static struct file *
+get_file (int fd)
+{
+  if (fd < 0 || fd >= 128)
+    return NULL;
+  struct thread *cur = thread_current ();
+  return cur->files[fd];
 }
 
 void
@@ -243,11 +127,15 @@ exit (int status)
 pid_t
 exec (const char *cmd_line)
 {
-  if (!validate_user_string (cmd_line))
+  if (!cmd_line)
+    thread_exit ();
+  for (int i = 0; i < 4096; i++)
     {
-      thread_exit ();
+      if (!validate_ptr (cmd_line + i, 1))
+        thread_exit ();
+      if (get_user ((const uint8_t *) (cmd_line + i)) == '\0')
+        break;
     }
-  
   return process_execute (cmd_line);
 }
 
@@ -260,60 +148,51 @@ wait (pid_t pid)
 bool
 create (const char *file, unsigned initial_size)
 {
-  if (!validate_user_string (file))
-    {
-      thread_exit ();
-    }
+  if (!file || !validate_ptr (file, 1))
+    thread_exit ();
   
   lock_acquire (&filesys_lock);
   bool result = filesys_create (file, initial_size);
   lock_release (&filesys_lock);
-  
   return result;
 }
 
 bool
 remove (const char *file)
 {
-  if (!validate_user_string (file))
-    {
-      thread_exit ();
-    }
+  if (!file || !validate_ptr (file, 1))
+    thread_exit ();
   
   lock_acquire (&filesys_lock);
   bool result = filesys_remove (file);
   lock_release (&filesys_lock);
-  
   return result;
 }
 
 int
 open (const char *file)
 {
-  if (!validate_user_string (file))
-    {
-      thread_exit ();
-    }
+  if (!file || !validate_ptr (file, 1))
+    thread_exit ();
   
   lock_acquire (&filesys_lock);
   struct file *f = filesys_open (file);
   lock_release (&filesys_lock);
   
-  if (f == NULL)
+  if (!f)
     return -1;
   
-  /* Find free fd slot. */
   struct thread *cur = thread_current ();
   for (int fd = 2; fd < 128; fd++)
     {
-      if (cur->files[fd] == NULL)
+      if (!cur->files[fd])
         {
           cur->files[fd] = f;
+          cur->next_fd = (fd + 1 < 128) ? fd + 1 : 2;
           return fd;
         }
     }
   
-  /* No free slot. */
   file_close (f);
   return -1;
 }
@@ -321,120 +200,98 @@ open (const char *file)
 int
 filesize (int fd)
 {
-  struct thread *cur = thread_current ();
-  
-  if (fd == 0 || fd == 1)
-    return -1;
-  
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return -1;
   
   lock_acquire (&filesys_lock);
-  int size = file_length (cur->files[fd]);
+  int size = file_length (f);
   lock_release (&filesys_lock);
-  
   return size;
 }
 
 int
 read (int fd, void *buffer, unsigned size)
 {
-  struct thread *cur = thread_current ();
-  
-  if (!validate_user_buffer (buffer, size))
-    {
-      thread_exit ();
-    }
+  if (!validate_ptr (buffer, size))
+    thread_exit ();
   
   if (fd == 0)
     {
-      /* Read from stdin. */
-      uint8_t *buf = (uint8_t *) buffer;
       for (unsigned i = 0; i < size; i++)
-        {
-          uint8_t byte = input_getc ();
-          if (!put_user (buf + i, byte))
-            return -1;
-        }
+        if (!put_user ((uint8_t *) buffer + i, input_getc ()))
+          return -1;
       return size;
     }
   
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return -1;
   
   lock_acquire (&filesys_lock);
-  int bytes_read = file_read (cur->files[fd], buffer, size);
+  int bytes_read = file_read (f, buffer, size);
   lock_release (&filesys_lock);
-  
   return bytes_read;
 }
 
 int
 write (int fd, const void *buffer, unsigned size)
 {
-  struct thread *cur = thread_current ();
-  
-  if (!validate_user_buffer (buffer, size))
-    {
-      thread_exit ();
-    }
+  if (!validate_ptr (buffer, size))
+    thread_exit ();
   
   if (fd == 1)
     {
-      /* Write to stdout. */
       putbuf ((const char *) buffer, (size_t) size);
       return size;
     }
   
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return -1;
   
   lock_acquire (&filesys_lock);
-  int bytes_written = file_write (cur->files[fd], buffer, size);
+  int bytes_written = file_write (f, buffer, size);
   lock_release (&filesys_lock);
-  
   return bytes_written;
 }
 
 void
 seek (int fd, unsigned position)
 {
-  struct thread *cur = thread_current ();
-  
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return;
   
   lock_acquire (&filesys_lock);
-  file_seek (cur->files[fd], position);
+  file_seek (f, position);
   lock_release (&filesys_lock);
 }
 
 unsigned
 tell (int fd)
 {
-  struct thread *cur = thread_current ();
-  unsigned pos = 0;
-  
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return -1;
   
   lock_acquire (&filesys_lock);
-  pos = file_tell (cur->files[fd]);
+  unsigned pos = file_tell (f);
   lock_release (&filesys_lock);
-  
   return pos;
 }
 
 void
 close (int fd)
 {
-  struct thread *cur = thread_current ();
-  
-  if (fd < 0 || fd >= 128 || cur->files[fd] == NULL)
+  struct file *f = get_file (fd);
+  if (!f)
     return;
   
   lock_acquire (&filesys_lock);
-  file_close (cur->files[fd]);
-  cur->files[fd] = NULL;
+  file_close (f);
   lock_release (&filesys_lock);
+  
+  struct thread *cur = thread_current ();
+  cur->files[fd] = NULL;
 }
