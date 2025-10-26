@@ -464,6 +464,20 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+#ifdef USERPROG
+  t->executable_file = NULL;
+  list_init (&t->child_list);
+  list_init (&t->wait_map);
+  sema_init (&t->load_sema, 0);
+  sema_init (&t->exit_sema, 0);
+  t->parent = NULL;
+  t->exit_status = -1;
+  t->load_success = false;
+  t->waited = false;
+  for (int i = 0; i < 128; i++)
+    t->files[i] = NULL;
+#endif
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);

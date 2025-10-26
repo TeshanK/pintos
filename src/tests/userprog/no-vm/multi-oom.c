@@ -27,8 +27,6 @@
 static const int EXPECTED_DEPTH_TO_PASS = 30;
 static const int EXPECTED_REPETITIONS = 10;
 
-const char *test_name = "multi-oom";
-
 enum child_termination_mode { RECURSE, CRASH };
 
 /* Spawn a recursive copy of ourselves, passing along instructions
@@ -38,7 +36,7 @@ spawn_child (int c, enum child_termination_mode mode)
 {
   char child_cmd[128];
   snprintf (child_cmd, sizeof child_cmd,
-            "%s %d %s", test_name, c, mode == CRASH ? "-k" : "");
+            "multi-oom %d %s", c, mode == CRASH ? "-k" : "");
   return exec (child_cmd);
 }
 
@@ -56,7 +54,7 @@ consume_some_resources (void)
      A low-memory condition in open() should not lead to the
      termination of the process.  */
   for (fd = 0; fd < fdmax; fd++)
-    if (open (test_name) == -1)
+    if (open ("multi-oom") == -1)
       break;
 }
 

@@ -5,6 +5,11 @@
 #include <list.h>
 #include <stdint.h>
 
+#ifdef USERPROG
+#include <stdbool.h>
+#include "threads/synch.h"
+#endif
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -96,10 +101,33 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct file *executable_file;       /* Executable file pointer. */
+    struct list child_list;             /* List of child processes. */
+    struct list_elem child_elem;        /* List element for parent's child_list. */
+    struct semaphore load_sema;         /* Semaphore for exec synchronization. */
+    struct semaphore exit_sema;         /* Semaphore for wait synchronization. */
+    struct thread *parent;              /* Parent process pointer. */
+    int exit_status;                    /* Exit status. */
+    bool load_success;                  /* Whether exec load succeeded. */
+    bool waited;                        /* Whether parent already waited. */
+    
+    /* File descriptor table. */
+    struct file *files[128];            /* Open files. */
+    
+    /* Map of children we're waiting on. */
+    struct list wait_map;               /* List of wait_entry. */
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+  };
+
+/* Entry in parent's wait_map for storing child exit status. */
+struct wait_entry
+  {
+    tid_t child_tid;
+    int exit_status;
+    struct list_elem elem;
   };
 
 /* If false (default), use round-robin scheduler.

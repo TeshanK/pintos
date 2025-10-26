@@ -13,8 +13,6 @@
 #include <syscall.h>
 #include "tests/lib.h"
 
-const char *test_name = "child-close";
-
 int
 main (int argc UNUSED, char *argv[]) 
 {

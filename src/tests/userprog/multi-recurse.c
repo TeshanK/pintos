@@ -7,8 +7,6 @@
 #include <syscall.h>
 #include "tests/lib.h"
 
-const char *test_name = "multi-recurse";
-
 int
 main (int argc UNUSED, char *argv[]) 
 {
