@@ -151,6 +151,8 @@ process_wait (tid_t child_tid)
   struct thread *cur = thread_current ();
   struct thread *child = NULL;
   int exit_status = -1;
+  struct semaphore *exiting_sema = NULL;
+  struct semaphore *reaped_sema = NULL;
   
   /* Find the child thread. */
   enum intr_level old_level = intr_disable ();
@@ -184,36 +186,41 @@ process_wait (tid_t child_tid)
   /* Mark as waited before releasing lock. */
   child->waited = true;
 
-  /* Store semaphore reference before removing child from list */
-  struct semaphore *child_exit_sema = &child->exit_sema;
+  /* Store references to semaphores. Keep child in list until we've read exit status. */
+  exiting_sema = &child->exiting_sema;
+  reaped_sema = &child->reaped_sema;
   
-  /* Create wait entry to store child's exit status in parent.
-     This persists across the wait. Must allocate on heap since we wait with lock released. */
-  struct wait_entry *wait_elem = palloc_get_page (0);
-  wait_elem->child_tid = child_tid;
-  wait_elem->exit_status = child->exit_status; /* Copy current exit status */
-  list_push_back (&cur->wait_map, &wait_elem->elem);
-  
-  /* Remove child from child_list immediately to avoid accessing freed memory */
-  list_remove (&child->child_elem);
-  
-  /* Store pointer to the wait entry so we can read it after wait */
-  struct wait_entry *stored_wait_elem = wait_elem;
-
   /* Can't hold lock while waiting for child to exit. */
   intr_set_level (old_level);
   
-  /* Wait for child to exit */
-  sema_down (child_exit_sema);
+  /* Phase 1: Wait for child to start exiting (will signal exiting_sema when exit() is called). */
+  sema_down (exiting_sema);
   
-  /* Child has exited. The exit status has been updated in stored_wait_elem by child. */
-  exit_status = stored_wait_elem->exit_status;
-  
-  /* Reacquire lock to remove wait entry from list */
+  /* Phase 2: Child is exiting. Read exit status from child (still alive).
+     We must re-find the child to get a fresh pointer to read exit_status safely. */
   old_level = intr_disable ();
-  list_remove (&stored_wait_elem->elem);
-  palloc_free_page (stored_wait_elem);
+  
+  /* Re-find child thread. */
+  struct thread *found_child = NULL;
+  for (struct list_elem *e = list_begin (&cur->child_list); e != list_end (&cur->child_list); e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, child_elem);
+      if (t->tid == child_tid && t->waited)
+        {
+          found_child = t;
+          exit_status = found_child->exit_status;
+          list_remove (e);  /* Remove from list after reading status */
+          break;
+        }
+    }
+  
+  if (found_child == NULL)
+    exit_status = -1;
+  
   intr_set_level (old_level);
+  
+  /* Signal child that we've read the exit status (child can now complete process_exit). */
+  sema_up (reaped_sema);
   
   return exit_status;
 }
@@ -246,22 +253,14 @@ process_exit (void)
       cur->executable_file = NULL;
     }
 
-  /* Signal parent if it's waiting. */
+  /* Signal parent that we're exiting. */
   if (cur->parent != NULL && cur->waited)
     {
-      /* Update parent's wait map with our exit status. */
-      enum intr_level save_level = intr_disable ();
-      for (struct list_elem *e = list_begin (&cur->parent->wait_map); e != list_end (&cur->parent->wait_map); e = list_next (e))
-        {
-          struct wait_entry *w = list_entry (e, struct wait_entry, elem);
-          if (w->child_tid == cur->tid)
-            {
-              w->exit_status = cur->exit_status;
-              break;
-            }
-        }
-      intr_set_level (save_level);
-      sema_up (&cur->exit_sema);
+      /* Phase 1: Signal parent that we're exiting. */
+      sema_up (&cur->exiting_sema);
+      
+      /* Phase 2: Wait for parent to read exit status and acknowledge. */
+      sema_down (&cur->reaped_sema);
     }
   
   /* Remove ourselves from parent's child list */
